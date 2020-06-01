@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Table 4.85 ¨C Syntactic elements (p533)
+// Table 4.85 - Syntactic elements (p533)
 enum {
 	ID_SCE = 0x0, // single channel element()
 	ID_CPE = 0x1, // channel_pair_element()
@@ -156,7 +156,7 @@ static int mpeg4_aac_pce_load(struct mpeg4_bits_t* bits, struct mpeg4_aac_t* aac
 
 	assert(aac->sampling_frequency_index == sampling_frequency_index);
 	assert(aac->profile == object_type + 1);
-	return (pce->bits + 7) / 8;
+	return (int)((pce->bits + 7) / 8);
 }
 
 // 4.4.1 Decoder configuration (GASpecificConfig) (p487)
@@ -309,7 +309,7 @@ int mpeg4_aac_audio_specific_config_load2(const uint8_t* data, size_t bytes, str
 			// TODO: ErrorProtectionSpecificConfig();
 			assert(0);
 		}
-		else if (3 == epConfig)
+		if (3 == epConfig)
 		{
 			if (mpeg4_bits_read(&bits)) // directMapping
 			{
@@ -353,12 +353,12 @@ int mpeg4_aac_audio_specific_config_load2(const uint8_t* data, size_t bytes, str
 	}
 
 	mpeg4_bits_aligment(&bits, 8);
-	return mpeg4_bits_error(&bits) ? -1 : bits.bits / 8;
+	return mpeg4_bits_error(&bits) ? -1 : (int)(bits.bits / 8);
 }
 
 int mpeg4_aac_audio_specific_config_save2(const struct mpeg4_aac_t* aac, uint8_t* data, size_t bytes)
 {
-	if (bytes < 2 + aac->npce)
+	if (bytes < 2 + (size_t)aac->npce)
 		return -1;
 
 	memcpy(data + 2, aac->pce, aac->npce);
@@ -384,14 +384,14 @@ int mpeg4_aac_adts_pce_load(const uint8_t* data, size_t bytes, struct mpeg4_aac_
 	}
 
 	if (bytes <= offset)
-		return offset;
+		return (int)offset;
 
 	mpeg4_bits_init(&bits, (uint8_t*)data + offset, bytes - offset);
 	if (ID_PCE == mpeg4_bits_read_uint8(&bits, 3))
 	{
 		mpeg4_bits_init(&pce, aac->pce, sizeof(aac->pce));
 		aac->npce = mpeg4_aac_pce_load(&bits, aac, &pce);
-		return mpeg4_bits_error(&bits) ? -1 : (7 + (pce.bits + 7) / 8);
+		return mpeg4_bits_error(&bits) ? -1 : (int)(7 + (pce.bits + 7) / 8);
 	}
 	return 7;
 }
@@ -400,7 +400,7 @@ int mpeg4_aac_adts_pce_save(uint8_t* data, size_t bytes, const struct mpeg4_aac_
 {
 	struct mpeg4_aac_t src;
 	struct mpeg4_bits_t pce, adts;
-	if (aac->npce + 7 > bytes)
+	if ((size_t)aac->npce + 7 > bytes)
 		return 0;
 	memcpy(&src, aac, sizeof(src));
 //	assert(data[1] & 0x01); // disable protection_absent
@@ -409,5 +409,5 @@ int mpeg4_aac_adts_pce_save(uint8_t* data, size_t bytes, const struct mpeg4_aac_
 	mpeg4_bits_write_uint8(&adts, ID_PCE, 3);
 	mpeg4_aac_pce_load(&pce, &src, &adts);
 	assert(src.channels == aac->channels);
-	return mpeg4_bits_error(&pce) ? 0 : (7 + (adts.bits+7) / 8);
+	return mpeg4_bits_error(&pce) ? 0 : (int)((7 + (adts.bits+7) / 8));
 }

@@ -2,7 +2,7 @@
 /// 4.2.11 Registration of MIME media type video/MP2P (p40)
 /// 
 /// RFC2250 2. Encapsulation of MPEG System and Transport Streams (p3)
-/// 1. Each RTP packet will contain a timestamp derived from the sender¡¯s 90KHz clock reference
+/// 1. Each RTP packet will contain a timestamp derived from the sender's 90KHz clock reference
 /// 2. For MPEG2 Program streams and MPEG1 system streams there are no packetization restrictions; 
 ///    these streams are treated as a packetized stream of bytes.
 ///
@@ -41,7 +41,11 @@ static void* rtp_ts_pack_create(int size, uint8_t pt, uint16_t seq, uint32_t ssr
 		size -= RTP_FIXED_HEADER;
 		size = size / TS_PACKET_SIZE * TS_PACKET_SIZE;
 		size += RTP_FIXED_HEADER;
-		if (size < 64) return NULL;
+		if (size < 64)
+		{
+			free(packer);
+			return NULL;
+		}
 	}
 
 	memcpy(&packer->handler, handler, sizeof(packer->handler));

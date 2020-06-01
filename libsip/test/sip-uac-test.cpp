@@ -160,6 +160,12 @@ static int sip_uac_onregister(void* param, const struct sip_message_t* reply, st
 			//HA2=md5(Method:Uri)
 			//RESPONSE=md5(HA1:nonce:HA2)
             ++auth.nc;
+			if(!auth.algorithm[0])
+				snprintf(auth.algorithm, sizeof(auth.algorithm), "MD5");
+			if (!auth.qop[0])
+				snprintf(auth.qop, sizeof(auth.qop), "auth");
+			else if (strchr(auth.qop, ','))
+				*strchr(auth.qop, ',') = '\0'; // replace auth,auth-int -> auth
             snprintf(auth.uri, sizeof(auth.uri), "sip:%s", "192.168.154.128");
             snprintf(auth.username, sizeof(auth.username), "%s", "34020000001320000001");
             http_header_auth(&auth, "12345678", "REGISTER", NULL, 0, buffer, sizeof(buffer));
@@ -211,9 +217,9 @@ static void sip_uac_message_test(struct sip_uac_test_t *test)
 	sip_uac_recv_reply(test);
 }
 
-static int sip_uac_oninvited(void* param, const struct sip_message_t* reply, struct sip_uac_transaction_t* t, struct sip_dialog_t* dialog, int code)
+static void* sip_uac_oninvited(void* param, const struct sip_message_t* reply, struct sip_uac_transaction_t* t, struct sip_dialog_t* dialog, int code)
 {
-	return 0;
+	return NULL;
 }
 
 static void sip_uac_invite_test(struct sip_uac_test_t *test)
@@ -251,7 +257,7 @@ void sip_uac_test(void)
 
 	test.udp = socket_udp();
 	test.sip = sip_agent_create(&handler, NULL);
-	test.parser = http_parser_create(HTTP_PARSER_CLIENT);
+	test.parser = http_parser_create(HTTP_PARSER_RESPONSE, NULL, NULL);
 	socket_bind_any(test.udp, SIP_PORT);
 	sip_uac_register_test(&test);
 	sip_uac_message_test(&test);

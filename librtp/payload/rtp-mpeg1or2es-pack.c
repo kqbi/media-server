@@ -64,7 +64,7 @@ static void* rtp_mpeg2es_pack_create(int size, uint8_t pt, uint16_t seq, uint32_
 	packer = (struct rtp_encode_mpeg2es_t *)calloc(1, sizeof(*packer));
 	if (!packer) return NULL;
 
-	assert(RTP_PAYLOAD_MPA == pt || RTP_PAYLOAD_MPV == pt);
+	assert(RTP_PAYLOAD_MP3 == pt || RTP_PAYLOAD_MPV == pt);
 	memcpy(&packer->handler, handler, sizeof(packer->handler));
 	packer->cbparam = cbparam;
 	packer->size = size;
@@ -73,7 +73,7 @@ static void* rtp_mpeg2es_pack_create(int size, uint8_t pt, uint16_t seq, uint32_
 	packer->pkt.rtp.pt = pt;
 	packer->pkt.rtp.seq = seq;
 	packer->pkt.rtp.ssrc = ssrc;
-	packer->pkt.rtp.m = (RTP_PAYLOAD_MPA == pt) ? 1 : 0; // set to 1 on first packet of a "talk-spurt," 0 otherwise.
+	packer->pkt.rtp.m = (RTP_PAYLOAD_MP3 == pt) ? 1 : 0; // set to 1 on first packet of a "talk-spurt," 0 otherwise.
 	return packer;
 }
 
@@ -281,7 +281,7 @@ static int rtp_mpeg2es_pack_video(struct rtp_encode_mpeg2es_t *packer, const uin
 		size_t nalu_size;
 
 		mpeg2vh.begin_of_sequence = 0;
-		mpeg2_video_header_parse(&mpeg2vh, p, pend - p);
+		mpeg2_video_header_parse(&mpeg2vh, p, (int)(pend - p));
 		
 		if (pend - p + N_MPEG12_HEADER + RTP_FIXED_HEADER <= packer->size)
 		{
@@ -302,12 +302,12 @@ static int rtp_mpeg2es_pack_video(struct rtp_encode_mpeg2es_t *packer, const uin
 					break;
 
 				// merge and get information
-				mpeg2_video_header_parse(&mpeg2vh, pnext, pend - pnext);
+				mpeg2_video_header_parse(&mpeg2vh, pnext, (int)(pend - pnext));
 				pnext = pnextnext;
 			}
 		}
 
-		r = rtp_mpeg2es_pack_slice(packer, p, pnext - p, &mpeg2vh, (pnext == pend) ? 1 : 0);
+		r = rtp_mpeg2es_pack_slice(packer, p, (int)(pnext - p), &mpeg2vh, (pnext == pend) ? 1 : 0);
 	}
 
 	return r;
@@ -319,7 +319,7 @@ static int rtp_mpeg2es_pack_input(void* pack, const void* data, int bytes, uint3
 	packer = (struct rtp_encode_mpeg2es_t*)pack;
 	assert(packer->pkt.rtp.timestamp != timestamp || !packer->pkt.payload /*first packet*/);
 	packer->pkt.rtp.timestamp = timestamp; //(uint32_t)(time * KHz); // ms -> 90KHZ (RFC2250 p7)
-	return RTP_PAYLOAD_MPA == packer->pkt.rtp.pt ?
+	return RTP_PAYLOAD_MP3 == packer->pkt.rtp.pt ?
 		rtp_mpeg2es_pack_audio(packer, (const uint8_t*)data, bytes) :
 		rtp_mpeg2es_pack_video(packer, (const uint8_t*)data, bytes);
 }

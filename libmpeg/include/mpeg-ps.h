@@ -16,7 +16,8 @@ enum
 	STREAM_VIDEO_SVAC	= 0x80,
 	STREAM_AUDIO_MP3	= 0x04,
 	STREAM_AUDIO_AAC	= 0x0f,
-	STREAM_AUDIO_G711	= 0x90,
+	STREAM_AUDIO_G711A	= 0x90,
+	STREAM_AUDIO_G711U	= 0x91,
 	STREAM_AUDIO_G722	= 0x92,
 	STREAM_AUDIO_G723	= 0x93,
 	STREAM_AUDIO_G729	= 0x99,
@@ -50,14 +51,14 @@ int ps_muxer_destroy(struct ps_muxer_t* muxer);
 /// Add audio/video stream
 /// @param[in] codecid PSI_STREAM_H264/PSI_STREAM_H265/PSI_STREAM_AAC, see more @mpeg-ts-proto.h
 /// @param[in] extradata itu h.222.0 program and program element descriptors, NULL for H.264/H.265/AAC
-/// @param[in] extradata_size extradata size in byte
+/// @param[in] bytes extradata size in byte
 /// @return <=0-error, >0-audio/video stream id
 int ps_muxer_add_stream(struct ps_muxer_t* muxer, int codecid, const void* extradata, size_t bytes);
 
 /// input ES
 /// @param[in] muxer MPEG-2 Program Stream packer(ps_muxer_create)
 /// @param[in] stream stream id, return by ps_muxer_add_stream
-/// @param[in] 0x0001-video IDR frame, 0x8000-H.264/H.265 with AUD
+/// @param[in] flags 0x0001-video IDR frame, 0x8000-H.264/H.265 with AUD
 /// @param[in] pts presentation time stamp(in 90KHZ)
 /// @param[in] dts decoding time stamp(in 90KHZ)
 /// @param[in] data ES memory

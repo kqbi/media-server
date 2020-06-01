@@ -8,10 +8,10 @@
 #include <string.h>
 #include <assert.h>
 
-int sdp_h264(uint8_t *data, int bytes, int payload, int frequence, const void* extra, int extra_size)
+int sdp_h264(uint8_t *data, int bytes, unsigned short port, int payload, int frequence, const void* extra, int extra_size)
 {
 	static const char* pattern =
-		"m=video 0 RTP/AVP %d\n"
+		"m=video %hu RTP/AVP %d\n"
 		"a=rtpmap:%d H264/90000\n"
 		"a=fmtp:%d profile-level-id=%02X%02X%02X;packetization-mode=1;sprop-parameter-sets=";
 
@@ -23,7 +23,7 @@ int sdp_h264(uint8_t *data, int bytes, int payload, int frequence, const void* e
 	if (r < 0) return r;
 	assert(avc.nb_pps + avc.nb_sps > 0);
 
-	n = snprintf((char*)data, bytes, pattern, payload, payload, payload,
+	n = snprintf((char*)data, bytes, pattern, port, payload, payload, payload,
 		(unsigned int)avc.profile, (unsigned int)avc.compatibility, (unsigned int)avc.level);
 
 	for (i = 0; i < avc.nb_sps; i++)
@@ -47,4 +47,30 @@ int sdp_h264(uint8_t *data, int bytes, int payload, int frequence, const void* e
 	if (n < bytes)
 		data[n++] = '\n';
 	return n;
+}
+
+int sdp_h264_load(uint8_t* data, int bytes, const char* config)
+{
+	int n, len, off;
+	const char* p, *next;
+	const uint8_t startcode[] = { 0x00, 0x00, 0x00, 0x01 };
+
+	off = 0;
+	p = config;
+	while (p)
+	{
+		next = strchr(p, ',');
+		len = next ? next - p : strlen(p);
+		if (off + (len + 3) / 4 * 3 + (int)sizeof(startcode) > bytes)
+			return -1; // don't have enough space
+
+		memcpy(data + off, startcode, sizeof(startcode));
+		n = (int)base64_decode(data + off + sizeof(startcode), p, len);
+		assert(n <= (len + 3) / 4 * 3);
+		off += n + sizeof(startcode);
+
+		p = next ? next + 1 : NULL;
+	}
+
+	return off;
 }

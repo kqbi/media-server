@@ -15,7 +15,8 @@ struct mov_writer_t
 
 static size_t mov_write_moov(struct mov_t* mov)
 {
-	size_t size, i;
+	int i;
+	size_t size;
 	uint64_t offset;
 
 	size = 8 /* Box */;
@@ -41,9 +42,10 @@ static size_t mov_write_moov(struct mov_t* mov)
 void mov_write_size(const struct mov_t* mov, uint64_t offset, size_t size)
 {
 	uint64_t offset2;
+    assert(size < UINT32_MAX);
 	offset2 = mov_buffer_tell(&mov->io);
 	mov_buffer_seek(&mov->io, offset);
-	mov_buffer_w32(&mov->io, size);
+	mov_buffer_w32(&mov->io, (uint32_t)size);
 	mov_buffer_seek(&mov->io, offset2);
 }
 
@@ -96,7 +98,7 @@ struct mov_writer_t* mov_writer_create(const struct mov_buffer_t* buffer, void* 
 static int mov_writer_move(struct mov_t* mov, uint64_t to, uint64_t from, size_t bytes);
 void mov_writer_destroy(struct mov_writer_t* writer)
 {
-	size_t i;
+	int i;
 	uint64_t offset, offset2;
 	struct mov_t* mov;
 	struct mov_track_t* track;
@@ -175,6 +177,8 @@ void mov_writer_destroy(struct mov_writer_t* writer)
 
 	for (i = 0; i < mov->track_count; i++)
         mov_free_track(mov->tracks + i);
+	if (mov->tracks)
+		free(mov->tracks);
 	free(writer);
 }
 
@@ -227,6 +231,7 @@ int mov_writer_write(struct mov_writer_t* writer, int track, const void* data, s
 	struct mov_t* mov;
 	struct mov_sample_t* sample;
 
+    assert(bytes < UINT32_MAX);
 	if (track < 0 || track >= (int)writer->mov.track_count)
 		return -ENOENT;
 	
@@ -246,7 +251,7 @@ int mov_writer_write(struct mov_writer_t* writer, int track, const void* data, s
 
 	sample = &mov->track->samples[mov->track->sample_count++];
 	sample->sample_description_index = 1;
-	sample->bytes = bytes;
+	sample->bytes = (uint32_t)bytes;
 	sample->flags = flags;
     sample->data = NULL;
 	sample->pts = pts;

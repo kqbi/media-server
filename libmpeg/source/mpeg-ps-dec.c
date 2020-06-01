@@ -1,5 +1,5 @@
 // ITU-T H.222.0(06/2012)
-// Information technology ¨C Generic coding of moving pictures and associated audio information: Systems
+// Information technology - Generic coding of moving pictures and associated audio information: Systems
 // 2.5.3.1 Program stream(p74)
 
 #include <stdio.h>
@@ -71,16 +71,16 @@ static size_t pes_packet_read(struct ps_demuxer_t *ps, const uint8_t* data, size
     size_t pes_packet_length;
     struct pes_t* pes;
 
-    // MPEG_program_end_code = 0x000000B9
+    // MPEG_program_end_code = 0x000001B9
     for (i = 0; i + 5 < bytes && 0x00 == data[i] && 0x00 == data[i + 1] && 0x01 == data[i + 2]
         && PES_SID_END != data[i + 3]
         && PES_SID_START != data[i + 3];
         i += pes_packet_length + 6) 
     {
         pes_packet_length = (data[i + 4] << 8) | data[i + 5];
-        assert(i + 6 + pes_packet_length <= bytes);
+        //assert(i + 6 + pes_packet_length <= bytes);
         if (i + 6 + pes_packet_length > bytes)
-            return 0;
+            return i;
 
         // stream id
         switch (data[i+3])
@@ -139,8 +139,19 @@ static size_t pes_packet_read(struct ps_demuxer_t *ps, const uint8_t* data, size
 size_t ps_demuxer_input(struct ps_demuxer_t* ps, const uint8_t* data, size_t bytes)
 {
 	size_t i, n;
+    const uint8_t* p, *pend;
 	
-    for (i = 0; i + 3 < bytes && 0x00 == data[i] && 0x00 == data[i + 1] && 0x01 == data[i + 2]; )
+    // location ps start
+    p = data;
+    pend = data + bytes;
+    while(p && pend - p > 3)
+    {
+        p = memchr(p + 3, PES_SID_START, pend - p - 3);
+        if(p && 0x01 == *(p-1) && 0x00 == *(p - 2) && 0x00 == *(p-3))
+            break;
+    }
+    
+    for (i = (p && p >= data+3) ? p - data - 3 : 0; i + 3 < bytes && data && 0x00 == data[i] && 0x00 == data[i + 1] && 0x01 == data[i + 2]; )
     {
         if (PES_SID_START == data[i + 3])
         {
@@ -174,6 +185,7 @@ struct ps_demuxer_t* ps_demuxer_create(ps_demuxer_onpacket onpacket, void* param
 	if(!ps)
 		return NULL;
 
+	ps->pkhd.mpeg2 = 1;
     ps->onpacket = onpacket;
 	ps->param = param;
 	return ps;

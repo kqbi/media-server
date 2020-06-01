@@ -19,7 +19,7 @@ class FontRecord {
 	unsigned int(8) font-name-length;
 	unsigned int(8) font[font-name-length];
 }
-class FontTableBox() extends Box(¡®ftab¡¯) {
+class FontTableBox() extends Box('ftab') {
 	unsigned int(16) entry-count;
 	FontRecord font-entry[entry-count];
 }
@@ -32,7 +32,7 @@ class BoxRecord {
 	signed int(16) bottom;
 	signed int(16) right;
 }
-class TextSampleEntry() extends SampleEntry (¡®tx3g¡¯) {
+class TextSampleEntry() extends SampleEntry ('tx3g') {
 	unsigned int(32) displayFlags;
 	signed int(8) horizontal-justification;
 	signed int(8) vertical-justification;
@@ -56,7 +56,7 @@ int mov_read_tx3g(struct mov_t* mov, const struct mov_box_t* box)
 	}
 
 	mov_buffer_read(&mov->io, entry->extra_data, box->size);
-	entry->extra_data_size = (size_t)box->size;
+	entry->extra_data_size = (int)box->size;
 	return mov_buffer_error(&mov->io);
 }
 

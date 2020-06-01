@@ -67,7 +67,7 @@ int sip_uas_del_transaction(struct sip_agent_t* sip, struct sip_uas_transaction_
 	list_for_each_safe(pos, next, &sip->dialogs)
 	{
 		dialog = list_entry(pos, struct sip_dialog_t, link);
-		if (0 == cstrcmp(&t->reply->callid, dialog->callid) && DIALOG_ERALY == dialog->state)
+		if (cstreq(&t->reply->callid, &dialog->callid) && DIALOG_ERALY == dialog->state)
 		{
 			//assert(0 == sip_contact_compare(&t->req->from, &dialog->local.uri));
 			sip_dialog_remove(sip, dialog); // TODO: release in locker
@@ -275,9 +275,26 @@ int sip_uas_reply(struct sip_uas_transaction_t* t, int code, const void* data, i
     if (0 == sip_contacts_count(&t->reply->contacts) &&
         (sip_message_isinvite(t->reply) || sip_message_isregister(t->reply)))
     {
+		// 12.1.1 UAS behavior (p70)
+		// The UAS MUST add a Contact header field to the response. The Contact 
+		// header field contains an address where the UAS would like to be 
+		// contacted for subsequent requests in the dialog (which includes the 
+		// ACK for a 2xx response in the case of an INVITE). Generally, the host 
+		// portion of this URI is the IP address or FQDN of the host. 
+		// The URI provided in the Contact header field MUST be a SIP or SIPS URI.
+
         sip_message_set_reply_default_contact(t->reply);
     }
     
+	// get transport reliable from via protocol
+	t->reliable = 1;
+	if (sip_vias_count(&t->reply->vias) > 0
+		&& (0 == cstrcmp(&(sip_vias_get(&t->reply->vias, 0)->transport), "UDP")
+			|| 0 == cstrcmp(&(sip_vias_get(&t->reply->vias, 0)->transport), "DTLS")))
+	{
+		t->reliable = 0;
+	}
+
 	if (sip_message_isinvite(t->reply))
 	{
 		r = sip_uas_transaction_invite_reply(t, code, data, bytes);
