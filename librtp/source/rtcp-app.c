@@ -3,26 +3,27 @@
 #include "rtp-internal.h"
 #include "rtp-util.h"
 
-void rtcp_app_unpack(struct rtp_context *ctx, rtcp_header_t *header, const uint8_t* ptr)
+void rtcp_app_unpack(struct rtp_context *ctx, const rtcp_header_t *header, const uint8_t* ptr, size_t bytes)
 {
 	struct rtcp_msg_t msg;
-	struct rtp_member *member;
+	//struct rtp_member *member;
 
-	if (header->length * 4 < 8) // RTCP header + SSRC + name
+	if (bytes < 8) // RTCP header + SSRC + name
 	{
 		assert(0);
 		return;
 	}
 
-	msg.type = RTCP_MSG_APP;
-	msg.u.app.ssrc = nbo_r32(ptr);
+	msg.ssrc = nbo_r32(ptr);
+	msg.type = RTCP_APP;
 
-	member = rtp_member_fetch(ctx, msg.u.app.ssrc);
-	if(!member) return; // error	
+	//member = rtp_member_fetch(ctx, msg.ssrc);
+	//if(!member) return; // error	
 
+	msg.u.app.subtype = header->rc;
 	memcpy(msg.u.app.name, ptr+4, 4);
 	msg.u.app.data = (void*)(ptr + 8);
-	msg.u.app.bytes = header->length * 4 - 8;
+	msg.u.app.bytes = (int)bytes - 8;
 	
 	ctx->handler.on_rtcp(ctx->cbparam, &msg);
 }
@@ -43,8 +44,12 @@ int rtcp_app_pack(struct rtp_context *ctx, uint8_t* ptr, int bytes, const char n
 		nbo_w32(ptr+4, ctx->self->ssrc);
 		memcpy(ptr+8, name, 4);
 
-		if(len > 0)
-			memcpy(ptr+12, app, len);
+		if (len > 0)
+		{
+			memcpy(ptr + 12, app, len);
+			if(0 != len % 4)
+				memset(ptr + 12 + len, 0, 4 - (len % 4));
+		}	
 	}
 
 	return 12 + (len+3)/4*4;

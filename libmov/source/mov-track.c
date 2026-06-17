@@ -18,6 +18,7 @@ struct mov_track_t* mov_add_track(struct mov_t* mov)
     track = &mov->tracks[mov->track_count];
     memset(track, 0, sizeof(struct mov_track_t));
     track->start_dts = INT64_MIN;
+    track->last_dts = INT64_MIN;
 
     track->stsd.entries = calloc(1, sizeof(struct mov_sample_entry_t));
     if (NULL == track->stsd.entries)
@@ -56,7 +57,7 @@ void mov_free_track(struct mov_track_t* track)
 
 struct mov_track_t* mov_find_track(const struct mov_t* mov, uint32_t track)
 {
-    size_t i;
+    int i;
     for (i = 0; i < mov->track_count; i++)
     {
         if (mov->tracks[i].tkhd.track_ID == track)
@@ -85,13 +86,16 @@ int mov_add_audio(struct mov_track_t* track, const struct mov_mvhd_t* mvhd, uint
 {
     struct mov_sample_entry_t* audio;
 
+    if (MOV_OBJECT_MP3 == object && sample_rate > 24000)
+        object = MOV_OBJECT_MP1A; // use mpeg1 sample rate table, see more @libflv/source/mp3-header.c
+
     audio = &track->stsd.entries[0];
     audio->data_reference_index = 1;
     audio->object_type_indication = object;
     audio->stream_type = MP4_STREAM_AUDIO;
     audio->u.audio.channelcount = (uint16_t)channel_count;
     audio->u.audio.samplesize = (uint16_t)bits_per_sample;
-    audio->u.audio.samplerate = (sample_rate > 56635 ? 0 : sample_rate) << 16;
+    audio->u.audio.samplerate = ((uint32_t)(sample_rate > 56635 ? 0 : sample_rate)) << 16;
 
     assert(0 != mov_object_to_tag(object));
     track->tag = mov_object_to_tag(object);
@@ -119,7 +123,7 @@ int mov_add_audio(struct mov_track_t* track, const struct mov_mvhd_t* mvhd, uint
     if (NULL == audio->extra_data)
         return -ENOMEM;
     memcpy(audio->extra_data, extra_data, extra_data_size);
-	audio->extra_data_size = extra_data_size;
+	audio->extra_data_size = (int)extra_data_size;
 
     return 0;
 }
@@ -165,28 +169,50 @@ int mov_add_video(struct mov_track_t* track, const struct mov_mvhd_t* mvhd, uint
     if (NULL == video->extra_data)
         return -ENOMEM;
     memcpy(video->extra_data, extra_data, extra_data_size);
-	video->extra_data_size = extra_data_size;
+	video->extra_data_size = (int)extra_data_size;
 
     return 0;
 }
 
 int mov_add_subtitle(struct mov_track_t* track, const struct mov_mvhd_t* mvhd, uint32_t timescale, uint8_t object, const void* extra_data, size_t extra_data_size)
 {
+    static const uint8_t chapter_extra_data[] = {
+        // TextSampleEntry
+        0x00, 0x00, 0x00, 0x01, // displayFlags
+        0x00, 0x00,             // horizontal + vertical justification
+        0x00, 0x00, 0x00, 0x00, // bgColourRed/Green/Blue/Alpha
+        // BoxRecord
+        0x00, 0x00, 0x00, 0x00, // defTextBoxTop/Left
+        0x00, 0x00, 0x00, 0x00, // defTextBoxBottom/Right
+        // StyleRecord
+        0x00, 0x00, 0x00, 0x00, // startChar + endChar
+        0x00, 0x01,             // fontID
+        0x00, 0x00,             // fontStyleFlags + fontSize
+        0x00, 0x00, 0x00, 0x00, // fgColourRed/Green/Blue/Alpha
+        // FontTableBox
+        0x00, 0x00, 0x00, 0x0D, // box size
+        'f', 't', 'a', 'b',     // box atom name
+        0x00, 0x01,             // entry count
+        // FontRecord
+        0x00, 0x01,             // font ID
+        0x00,                   // font name length
+    };
+
     struct mov_sample_entry_t* subtitle;
 
     subtitle = &track->stsd.entries[0];
     subtitle->data_reference_index = 1;
     subtitle->object_type_indication = object;
-    subtitle->stream_type = MP4_STREAM_VISUAL; // Visually composed tracks including video and text are layered using the ¡®layer¡¯ value.
+    subtitle->stream_type = MP4_STREAM_VISUAL; // Visually composed tracks including video and text are layered using the 'layer' value.
 
     assert(0 != mov_object_to_tag(object));
     track->tag = mov_object_to_tag(object);
-    track->handler_type = MOV_SUBT;
+    track->handler_type = track->tag == MOV_TAG('t', 'e', 'x', 't') ? MOV_TEXT : MOV_SBTL;
     track->handler_descr = "SubtitleHandler";
     track->stsd.entry_count = 1;
     track->offset = 0;
 
-    track->tkhd.flags = MOV_TKHD_FLAG_TRACK_ENABLE | MOV_TKHD_FLAG_TRACK_IN_MOVIE;
+    track->tkhd.flags = (track->tag == MOV_TAG('t', 'e', 'x', 't') ? 0 : MOV_TKHD_FLAG_TRACK_ENABLE) | MOV_TKHD_FLAG_TRACK_IN_MOVIE;
     track->tkhd.track_ID = mvhd->next_track_ID;
     track->tkhd.creation_time = mvhd->creation_time;
     track->tkhd.modification_time = mvhd->modification_time;
@@ -201,11 +227,17 @@ int mov_add_subtitle(struct mov_track_t* track, const struct mov_mvhd_t* mvhd, u
     track->mdhd.language = 0x55c4;
     track->mdhd.duration = 0; // placeholder
 
+    if (object == MOV_OBJECT_CHAPTER && 0 == extra_data_size)
+    {
+        extra_data = chapter_extra_data;
+        extra_data_size = sizeof(chapter_extra_data);
+    }
+
 	subtitle->extra_data = malloc(extra_data_size + 1);
     if (NULL == subtitle->extra_data)
         return -ENOMEM;
     memcpy(subtitle->extra_data, extra_data, extra_data_size);
-	subtitle->extra_data_size = extra_data_size;
+	subtitle->extra_data_size = (int)extra_data_size;
 
     return 0;
 }
@@ -264,7 +296,11 @@ size_t mov_write_minf(const struct mov_t* mov)
     {
         size += mov_write_smhd(mov);
     }
-    else if (MOV_SUBT == track->handler_type)
+    else if (MOV_TEXT == track->handler_type)
+    {
+        size += mov_write_gmhd(mov);
+    }
+    else if (MOV_SUBT == track->handler_type || MOV_SBTL == track->handler_type)
     {
         size += mov_write_nmhd(mov);
     }
@@ -308,8 +344,9 @@ size_t mov_write_trak(const struct mov_t* mov)
     mov_buffer_write(&mov->io, "trak", 4);
 
     size += mov_write_tkhd(mov);
-    //size += mov_write_tref(mov);
     size += mov_write_edts(mov);
+    if(mov->track->chpl_track != 0)
+        size += mov_write_tref(mov);
     size += mov_write_mdia(mov);
 
     mov_write_size(mov, offset, size); /* update size */
@@ -333,4 +370,16 @@ size_t mov_write_edts(const struct mov_t* mov)
 
     mov_write_size(mov, offset, size); /* update size */
     return size;
+}
+
+size_t mov_write_tref(const struct mov_t* mov)
+{
+    mov_buffer_w32(&mov->io, 20); /* size */
+    mov_buffer_write(&mov->io, "tref", 4);
+
+    mov_buffer_w32(&mov->io, 12); /* size */
+    mov_buffer_write(&mov->io, "chap", 4);
+    mov_buffer_w32(&mov->io, mov->track->chpl_track);
+
+    return 20;
 }

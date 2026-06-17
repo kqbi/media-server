@@ -1,5 +1,5 @@
 #include "rtp-udp-transport.h"
-#include "rtp-socket.h"
+#include "sockpair.h"
 #include "ctypedef.h"
 #include "port/ip-route.h"
 
@@ -28,7 +28,19 @@ int RTPUdpTransport::Init(const char* ip, unsigned short port[2])
 		return 0 != r1 ? r1 : r2;
 
 	r1 = ip_route_get(ip, local);
-	return rtp_socket_create(0==r1 ? local : NULL, m_socket, port);
+	return sockpair_create(0==r1 ? local : NULL, m_socket, port);
+}
+
+int RTPUdpTransport::Init(socket_t socket[2], const char* peer, unsigned short port[2])
+{
+	int r1 = socket_addr_from(&m_addr[0], &m_addrlen[0], peer, port[0]);
+	int r2 = socket_addr_from(&m_addr[1], &m_addrlen[1], peer, port[1]);
+	if (0 != r1 || 0 != r2)
+		return 0 != r1 ? r1 : r2;
+	
+	m_socket[0] = socket[0];
+	m_socket[1] = socket[1];
+	return 0;
 }
 
 int RTPUdpTransport::Send(bool rtcp, const void* data, size_t bytes)

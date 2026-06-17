@@ -106,7 +106,7 @@ private:
                 assert(0);
             }
         }
-        return r;
+        return 0; // ignore error
     }
 };
 
@@ -193,6 +193,15 @@ static aio_rtmp_userptr_t aio_rtmp_server_onplay(void* /*param*/, aio_rtmp_sessi
             return NULL;
         }
         s = it->second;
+
+        for (auto j = s->players.begin(); j != s->players.end(); ++j)
+        {
+            if (j->get()->rtmp == session)
+            {
+                printf("rtmp session(%s, %s) exist\n", app, stream);
+                return j->get();
+            }
+        }
     }
     
     std::shared_ptr<rtmp_player_t> player(new rtmp_player_t(session));

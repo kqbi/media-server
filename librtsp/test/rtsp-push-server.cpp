@@ -6,10 +6,10 @@
 #include "aio-worker.h"
 #include "ctypedef.h"
 #include "ntp-time.h"
+#include "sockpair.h"
 #include "rtp-profile.h"
 #include "rtsp-server.h"
 #include "rtsp-media.h"
-#include "rtp-socket.h"
 #include "rtsp-header-transport.h"
 #include "rtsp-server-aio.h"
 #include "uri-parse.h"
@@ -59,7 +59,7 @@ static int rtsp_uri_parse(const char* uri, std::string& path)
 	return 0;
 }
 
-static int rtsp_onannounce(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, const char* sdp)
+static int rtsp_onannounce(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, const char* sdp, int len)
 {
 	std::string filename;
 	TSessions::const_iterator it;
@@ -67,7 +67,7 @@ static int rtsp_onannounce(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, 
 
 	rtsp_uri_parse(uri, filename);
 	
-	source->count = rtsp_media_sdp(sdp, source->media, sizeof(source->media)/sizeof(source->media[0]));
+	source->count = rtsp_media_sdp(sdp, len, source->media, sizeof(source->media)/sizeof(source->media[0]));
 	if(source->count < 0 || source->count > sizeof(source->media) / sizeof(source->media[0]))
 		return rtsp_server_reply_announce(rtsp, 451); // Parameter Not Understood
 
@@ -188,7 +188,7 @@ static int rtsp_onsetup(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, con
 			{
 				// unicast
 				unsigned short port[2];
-				if (0 != rtp_socket_create(NULL, stream->socket, port))
+				if (0 != sockpair_create(NULL, stream->socket, port))
 				{
 					// 500 Internal Server Error
 					return rtsp_server_reply_setup(rtsp, 500, NULL, NULL);

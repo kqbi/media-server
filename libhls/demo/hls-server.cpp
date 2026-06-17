@@ -65,7 +65,7 @@ static int hls_handler(void* param, const void* data, size_t bytes, int64_t pts,
 	playlist->last_pts = pts + duration;
 
 	char name[128] = { 0 };
-	snprintf(name, sizeof(name), "%s/%d.ts", playlist->file.c_str(), playlist->i++);
+	snprintf(name, sizeof(name) - 1, "%s/%d.ts", playlist->file.c_str(), playlist->i++);
 	hls_m3u8_add(playlist->m3u8, name, pts, duration, discontinue);
 
 	// add new segment
@@ -100,16 +100,16 @@ static int flv_handler(void* param, int codec, const void* data, size_t bytes, u
 	switch (codec)
 	{
 	case FLV_AUDIO_AAC:
-		return hls_media_input(hls, STREAM_AUDIO_AAC, data, bytes, pts, dts, 0);
+		return hls_media_input(hls, PSI_STREAM_AAC, data, bytes, pts, dts, 0);
 
 	case FLV_AUDIO_MP3:
-		return hls_media_input(hls, STREAM_AUDIO_MP3, data, bytes, pts, dts, 0);
+		return hls_media_input(hls, PSI_STREAM_MP3, data, bytes, pts, dts, 0);
 
 	case FLV_VIDEO_H264:
-		return hls_media_input(hls, STREAM_VIDEO_H264, data, bytes, pts, dts, flags ? HLS_FLAGS_KEYFRAME : 0);
+		return hls_media_input(hls, PSI_STREAM_H264, data, bytes, pts, dts, flags ? HLS_FLAGS_KEYFRAME : 0);
 
 	case FLV_VIDEO_H265:
-		return hls_media_input(hls, STREAM_VIDEO_H265, data, bytes, pts, dts, flags ? HLS_FLAGS_KEYFRAME : 0);
+		return hls_media_input(hls, PSI_STREAM_H265, data, bytes, pts, dts, flags ? HLS_FLAGS_KEYFRAME : 0);
 
 	default:
 		// nothing to do
@@ -120,31 +120,32 @@ static int flv_handler(void* param, int codec, const void* data, size_t bytes, u
 static int STDCALL hls_server_worker(void* param)
 {
 	int r, type;
-	uint64_t clock;
+	size_t taglen;
+	uint32_t clock;
 	uint32_t timestamp;
 	hls_playlist_t* playlist = (hls_playlist_t*)param;
+
 	std::string file = playlist->file + ".flv";
+	UTF8Decode utf8(file.c_str());
+	std::string fullpath = CWD;
+	fullpath += utf8;
 
 	while (1)
 	{
-		void* flv = flv_reader_create(file.c_str());
+		void* flv = flv_reader_create(fullpath.c_str());
 		flv_demuxer_t* demuxer = flv_demuxer_create(flv_handler, playlist->hls);
 
-		clock = 0;
-		while ((r = flv_reader_read(flv, &type, &timestamp, playlist->packet, sizeof(playlist->packet))) > 0)
+		clock = system_clock();
+		while (1 == flv_reader_read(flv, &type, &timestamp, &taglen, playlist->packet, sizeof(playlist->packet)))
 		{
-			uint64_t now = system_clock();
-			if (0 == clock)
-			{
-				clock = now;
-			}
-			else
-			{
-				if (timestamp > now - clock)
-					system_sleep(timestamp - (now - clock));
-			}
+			uint32_t now = system_clock();
+			if (clock + timestamp > now && clock + timestamp < now + 3 * 1000) // dts skip
+				system_sleep(clock + timestamp - now);
+			else if (clock + timestamp > now + 3 * 1000)
+				clock = now - timestamp;
 
-			assert(0 == flv_demuxer_input(demuxer, type, playlist->packet, r, timestamp));
+			r = flv_demuxer_input(demuxer, type, playlist->packet, taglen, timestamp);
+			assert(0 == r);
 		}
 
 		flv_demuxer_destroy(demuxer);
@@ -165,8 +166,6 @@ static int hls_server_m3u8(http_session_t* session, const std::string& path)
 	assert(0 == hls_m3u8_playlist(m3u8, 0, playlist, sizeof(playlist)));
 	
 	http_server_set_header(session, "content-type", HLS_M3U8_TYPE);
-	http_server_set_header(session, "Access-Control-Allow-Origin", "*");
-	http_server_set_header(session, "Access-Control-Allow-Methods", "GET, POST, PUT");
 	http_server_reply(session, 200, playlist, strlen(playlist));
 
 	printf("load %s.m3u8 file\n", path.c_str());
@@ -197,20 +196,25 @@ static int hls_server_ts(http_session_t* session, const std::string& path, const
 		if(ts->name == file)
 		{
             std::atomic_fetch_add(&ts->ref, 1);
-			http_server_set_header(session, "Access-Control-Allow-Origin", "*");
-			http_server_set_header(session, "Access-Control-Allow-Methods", "GET, POST, PUT");
-			http_server_send(session, 200, ts->data, ts->size, hls_server_ts_onsend, ts);
+			http_server_send(session, ts->data, ts->size, hls_server_ts_onsend, ts);
 			printf("load file %s\n", file.c_str());
 			return 0;
 		}
 	}
 
 	printf("load ts file(%s) failed\n", file.c_str());
-	return http_server_send(session, 404, "", 0, NULL, NULL);
+	http_server_set_status_code(session, 404, NULL);
+	return http_server_send(session, "", 0, NULL, NULL);
 }
 
 static int hls_server_onlive(void* /*http*/, http_session_t* session, const char* /*method*/, const char* path)
-{
+{    
+	// HTTP CORS
+	http_server_set_header(session, "Access-Control-Allow-Origin", "*");
+	http_server_set_header(session, "Access-Control-Allow-Headers", "*");
+	http_server_set_header(session, "Access-Control-Allow-Credentials", "true");
+	http_server_set_header(session, "Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS, CONNECT");
+
 	path = path + 6;
 	if (strendswith(path, ".m3u8"))
 	{
@@ -239,7 +243,8 @@ static int hls_server_onlive(void* /*http*/, http_session_t* session, const char
 		}
 	}
 
-	return http_server_send(session, 404, "", 0, NULL, NULL);
+	http_server_set_status_code(session, 404, NULL);
+	return http_server_send(session, "", 0, NULL, NULL);
 }
 
 static int hls_server_onvod(void* /*http*/, http_session_t* session, const char* /*method*/, const char* path)
@@ -255,8 +260,6 @@ static int hls_server_onvod(void* /*http*/, http_session_t* session, const char*
 	}
 	else if (path_testfile(fullpath.c_str()))
 	{
-		http_server_set_header(session, "Access-Control-Allow-Origin", "*");
-		http_server_set_header(session, "Access-Control-Allow-Methods", "GET, POST, PUT");
 		//http_server_set_header(session, "Transfer-Encoding", "chunked");
 		if (std::string::npos != fullpath.find(".m3u8"))
 			http_server_set_header(session, "content-type", HLS_M3U8_TYPE);
@@ -269,7 +272,8 @@ static int hls_server_onvod(void* /*http*/, http_session_t* session, const char*
 		return http_server_sendfile(session, fullpath.c_str(), NULL, NULL);
 	}
 
-	return http_server_send(session, 404, "", 0, NULL, NULL);
+	http_server_set_status_code(session, 404, NULL);
+	return http_server_send(session, "", 0, NULL, NULL);
 }
 
 void hls_server_test(const char* ip, int port)

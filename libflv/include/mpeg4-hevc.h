@@ -39,19 +39,28 @@ struct mpeg4_hevc_t
 
 	uint8_t array_completeness;
 	uint8_t data[4 * 1024];
+	size_t off;
 };
 
+// load hevc from HEVCDecoderConfigurationRecord
 int mpeg4_hevc_decoder_configuration_record_load(const uint8_t* data, size_t bytes, struct mpeg4_hevc_t* hevc);
 
 int mpeg4_hevc_decoder_configuration_record_save(const struct mpeg4_hevc_t* hevc, uint8_t* data, size_t bytes);
+
+// load hevc from annex-b bitstream
+int mpeg4_hevc_from_nalu(const uint8_t* data, size_t bytes, struct mpeg4_hevc_t* hevc);
 
 int mpeg4_hevc_to_nalu(const struct mpeg4_hevc_t* hevc, uint8_t* data, size_t bytes);
 
 int mpeg4_hevc_codecs(const struct mpeg4_hevc_t* hevc, char* codecs, size_t bytes);
 
-size_t hevc_annexbtomp4(struct mpeg4_hevc_t* hevc, const void* data, size_t bytes, void* out, size_t size);
+int h265_annexbtomp4(struct mpeg4_hevc_t* hevc, const void* data, size_t bytes, void* out, size_t size, int *vcl, int* update);
 
-size_t hevc_mp4toannexb(const struct mpeg4_hevc_t* hevc, const void* data, size_t bytes, void* out, size_t size);
+int h265_mp4toannexb(const struct mpeg4_hevc_t* hevc, const void* data, size_t bytes, void* out, size_t size);
+
+/// h265_is_new_access_unit H.265 new access unit(frame)
+/// @return 1-new access, 0-not a new access
+int h265_is_new_access_unit(const uint8_t* nalu, size_t bytes);
 
 #if defined(__cplusplus)
 }

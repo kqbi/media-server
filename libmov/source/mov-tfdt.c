@@ -17,9 +17,10 @@ int mov_read_tfdt(struct mov_t* mov, const struct mov_box_t* box)
         mov->track->tfdt_dts = mov_buffer_r32(&mov->io); /* baseMediaDecodeTime */
 
     // baseMediaDecodeTime + ELST start offset
-    mov_apply_elst_tfdt(mov->track);
+    mov_apply_elst_tfdt(mov->track, mov->mvhd.timescale);
 
-    return mov_buffer_error(&mov->io); (void)box;
+	(void)box;
+    return mov_buffer_error(&mov->io);
 }
 
 size_t mov_write_tfdt(const struct mov_t* mov)

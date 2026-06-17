@@ -1,9 +1,11 @@
 #if defined(_DEBUG) || defined(DEBUG)
 #include "cstringext.h"
 #include "sys/sock.h"
+#include "sys/thread.h"
 #include "sys/system.h"
 #include "sys/path.h"
 #include "sys/sync.hpp"
+#include "sockutil.h"
 #include "aio-worker.h"
 #include "ctypedef.h"
 #include "ntp-time.h"
@@ -11,6 +13,7 @@
 #include "rtsp-server.h"
 #include "media/ps-file-source.h"
 #include "media/h264-file-source.h"
+#include "media/h265-file-source.h"
 #include "media/mp4-file-source.h"
 #include "rtp-udp-transport.h"
 #include "rtp-tcp-transport.h"
@@ -27,7 +30,18 @@
 #include "media/ffmpeg-live-source.h"
 #endif
 
-static const char* s_workdir = "e:\\";
+#define UDP_MULTICAST_ADDR "239.0.0.2"
+#define UDP_MULTICAST_PORT 6000
+
+// ffplay rtsp://127.0.0.1/vod/video/abc.mp4
+// Windows --> d:\video\abc.mp4
+// Linux   --> ./video/abc.mp4
+
+#if defined(OS_WINDOWS)
+static const char* s_workdir = "d:\\";
+#else
+static const char* s_workdir = "./";
+#endif
 
 static ThreadLocker s_locker;
 
@@ -37,6 +51,7 @@ struct rtsp_media_t
 	std::shared_ptr<IRTPTransport> transport;
 	uint8_t channel; // rtp over rtsp interleaved channel
 	int status; // setup-init, 1-play, 2-pause
+	rtsp_server_t* rtsp;
 };
 typedef std::map<std::string, rtsp_media_t> TSessions;
 static TSessions s_sessions;
@@ -124,6 +139,8 @@ static int rtsp_ondescribe(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri)
 					source.reset(new PSFileSource(filename.c_str()));
 				else if (strendswith(filename.c_str(), ".h264"))
 					source.reset(new H264FileSource(filename.c_str()));
+				else if (strendswith(filename.c_str(), ".h265"))
+					source.reset(new H265FileSource(filename.c_str()));					
 				else
 				{
 #if defined(_HAVE_FFMPEG_)
@@ -200,6 +217,7 @@ static int rtsp_onsetup(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, con
 	else
 	{
 		rtsp_media_t item;
+		item.rtsp = rtsp;
 		item.channel = 0;
 		item.status = 0;
 
@@ -215,6 +233,8 @@ static int rtsp_onsetup(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, con
 				item.media.reset(new PSFileSource(filename.c_str()));
 			else if (strendswith(filename.c_str(), ".h264"))
 				item.media.reset(new H264FileSource(filename.c_str()));
+			else if (strendswith(filename.c_str(), ".h265"))
+				item.media.reset(new H265FileSource(filename.c_str()));				
 			else
 			{
 #if defined(_HAVE_FFMPEG_)
@@ -277,12 +297,42 @@ static int rtsp_onsetup(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, con
 	}
 	else if(transport->multicast)
 	{
+        unsigned short port[2] = { transport->rtp.u.client_port1, transport->rtp.u.client_port2 };
+        char multicast[SOCKET_ADDRLEN];
 		// RFC 2326 1.6 Overall Operation p12
-		// Multicast, client chooses address
-		// Multicast, server chooses address
-		assert(0);
-		// 461 Unsupported Transport
-		return rtsp_server_reply_setup(rtsp, 461, NULL, NULL);
+		
+		if(transport->destination[0])
+        {
+            // Multicast, client chooses address
+            snprintf(multicast, sizeof(multicast), "%s", transport->destination);
+            port[0] = transport->rtp.m.port1;
+            port[1] = transport->rtp.m.port2;
+        }
+        else
+        {
+            // Multicast, server chooses address
+            snprintf(multicast, sizeof(multicast), "%s", UDP_MULTICAST_ADDR);
+            port[0] = UDP_MULTICAST_PORT;
+            port[1] = UDP_MULTICAST_PORT + 1;
+        }
+        
+        item.transport = std::make_shared<RTPUdpTransport>();
+        if(0 != ((RTPUdpTransport*)item.transport.get())->Init(multicast, port))
+        {
+            // log
+
+            // 500 Internal Server Error
+            return rtsp_server_reply_setup(rtsp, 500, NULL, NULL);
+        }
+        item.media->SetTransport(path_basename(uri), item.transport);
+
+        // Transport: RTP/AVP;multicast;destination=224.2.0.1;port=3456-3457;ttl=16
+        snprintf(rtsp_transport, sizeof(rtsp_transport),
+            "RTP/AVP;multicast;destination=%s;port=%hu-%hu;ttl=%d",
+            multicast, port[0], port[1], 16);
+        
+        // 461 Unsupported Transport
+        //return rtsp_server_reply_setup(rtsp, 461, NULL, NULL);
 	}
 	else
 	{
@@ -358,6 +408,11 @@ static int rtsp_onplay(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, cons
 	char rtpinfo[512] = { 0 };
 	source->GetRTPInfo(uri, rtpinfo, sizeof(rtpinfo));
 
+	// for vlc 2.2.2
+	MP4FileSource* mp4 = dynamic_cast<MP4FileSource*>(source.get());
+	if(mp4)
+		mp4->SendRTCP(system_time());
+
 	it->second.status = 1;
     return rtsp_server_reply_play(rtsp, 200, npt, NULL, rtpinfo);
 }
@@ -415,7 +470,7 @@ static int rtsp_onteardown(void* /*ptr*/, rtsp_server_t* rtsp, const char* /*uri
 	return rtsp_server_reply_teardown(rtsp, 200);
 }
 
-static int rtsp_onannounce(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, const char* sdp)
+static int rtsp_onannounce(void* /*ptr*/, rtsp_server_t* rtsp, const char* uri, const char* sdp, int len)
 {
     return rtsp_server_reply_announce(rtsp, 200);
 }
@@ -459,8 +514,101 @@ static int rtsp_onclose(void* /*ptr2*/)
 static void rtsp_onerror(void* /*param*/, rtsp_server_t* rtsp, int code)
 {
 	printf("rtsp_onerror code=%d, rtsp=%p\n", code, rtsp);
+
+	TSessions::iterator it;
+	AutoThreadLocker locker(s_locker);
+	for (it = s_sessions.begin(); it != s_sessions.end(); ++it)
+	{
+		if (rtsp == it->second.rtsp)
+		{
+			it->second.media->Pause();
+			s_sessions.erase(it);
+			break;
+		}
+	}
+
+    //return 0;
 }
 
+#if defined(RTSP_SERVER_SOCKET_TEST)
+static int rtsp_send(void* ptr, const void* data, size_t bytes)
+{
+	socket_t socket = (socket_t)(intptr_t)ptr;
+
+	// TODO: send multiple rtp packet once time
+	return bytes == socket_send(socket, data, bytes, 0) ? 0 : -1;
+}
+
+extern "C" void rtsp_example()
+{
+	socket_t socket;
+	char buffer[512];
+
+	// create server socket
+	socket = socket_tcp_listen(0 /*AF_UNSPEC*/, "0.0.0.0", 8554, SOMAXCONN, 0, 0);
+	if (socket_invalid == socket)
+		return;
+
+	while(1)
+	{
+		sockaddr_storage addr;
+		socklen_t len = sizeof(addr);
+		socket_t tcp = socket_accept(socket, &addr, &len);
+		if (socket_invalid == tcp)
+			continue;
+
+		struct rtsp_handler_t handler;
+		memset(&handler, 0, sizeof(handler));
+		handler.ondescribe = rtsp_ondescribe;
+		handler.onsetup = rtsp_onsetup;
+		handler.onplay = rtsp_onplay;
+		handler.onpause = rtsp_onpause;
+		handler.onteardown = rtsp_onteardown;
+		handler.onannounce = rtsp_onannounce;
+		handler.onrecord = rtsp_onrecord;
+		handler.onoptions = rtsp_onoptions;
+		handler.ongetparameter = rtsp_ongetparameter;
+		handler.onsetparameter = rtsp_onsetparameter;
+		handler.close = rtsp_onclose;
+		handler.send = rtsp_send;
+
+		u_short port = 0;
+		socket_setnonblock(tcp, 0); // block io
+		socket_addr_to((const sockaddr*)&addr, len, buffer, &port);
+		struct rtsp_server_t* rtsp = rtsp_server_create(buffer, port, &handler, NULL, (void*)(intptr_t)tcp); // reuse-able, don't need create in every link
+
+		while (1)
+		{
+			int r = socket_recv_by_time(tcp, buffer, sizeof(buffer), 0, 5);
+			if (r > 0)
+			{
+				size_t n = r;
+				r = rtsp_server_input(rtsp, buffer, &n);
+				assert(n == 0 && r == 0);
+			}
+			else if (r <= 0 && r != SOCKET_TIMEDOUT)
+			{
+				break;
+			}
+
+			TSessions::iterator it;
+			AutoThreadLocker locker(s_locker);
+			for (it = s_sessions.begin(); it != s_sessions.end(); ++it)
+			{
+				rtsp_media_t& session = it->second;
+				if (1 == session.status)
+					session.media->Play();
+			}
+		}
+		
+		rtsp_server_destroy(rtsp);
+		socket_close(tcp);
+	}
+
+	socket_close(socket);
+}
+
+#else
 #define N_AIO_THREAD 4
 extern "C" void rtsp_example()
 {
@@ -482,7 +630,9 @@ extern "C" void rtsp_example()
 //	handler.base.send; // ignore
 	handler.onerror = rtsp_onerror;
     
-	void* tcp = rtsp_server_listen(NULL, 554, &handler, NULL); assert(tcp);
+	// 1. check s_workdir, MUST be end with '/' or '\\'
+	// 2. url: rtsp://127.0.0.1:8554/vod/<filename>
+	void* tcp = rtsp_server_listen("0.0.0.0", 8554, &handler, NULL); assert(tcp);
 //	void* udp = rtsp_transport_udp_create(NULL, 554, &handler, NULL); assert(udp);
 
 	// test only
@@ -506,4 +656,14 @@ extern "C" void rtsp_example()
 	rtsp_server_unlisten(tcp);
 //	rtsp_transport_udp_destroy(udp);
 }
+#endif // N_AIO_THREAD
+
+#if defined(RTSP_TEST_MAIN)
+int main(int argc, const char* argv[])
+{
+	rtsp_example();
+	return 0;
+}
 #endif
+
+#endif // _DEBUG

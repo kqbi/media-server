@@ -8,6 +8,7 @@
 #include "rtsp-header-session.h"
 #include "rtsp-header-transport.h"
 #include "http-parser.h"
+#include "sdp-options.h"
 #include "sdp.h"
 #include <errno.h>
 #include <stdio.h>
@@ -20,7 +21,7 @@
 #define strcasecmp	_stricmp
 #endif
 
-#define USER_AGENT "RTSP client v0.1"
+#define USER_AGENT "ireader/media-server"
 #define N_MEDIA 8
 
 enum rtsp_state_t
@@ -60,8 +61,8 @@ struct rtsp_client_t
 
 	// media
 	char range[64]; // rtsp header Range
-	char speed[16]; // rtsp header speed
-    char scale[16]; // rtsp header scale
+	//char speed[16]; // rtsp header speed
+    char scale[32]; // rtsp header scale
     char req[2048];
 
 	char uri[256];
@@ -72,6 +73,7 @@ struct rtsp_client_t
 	char aggregate_uri[256]; // aggregate control uri, valid if 1==aggregate
 
 	int auth_failed;
+	int redirect_count;
 	char usr[128];
 	char pwd[256];
 	char authenrization[1024];
@@ -83,7 +85,6 @@ struct rtsp_client_t
 //int rtsp_client_setup(struct rtsp_client_t* rtsp, const char* sdp);
 //int rtsp_client_teardown(struct rtsp_client_t* rtsp);
 int rtsp_client_sdp(struct rtsp_client_t* rtsp, const char* sdp);
-int rtsp_client_options(struct rtsp_client_t *rtsp, const char* commands);
 int rtsp_client_get_parameter(struct rtsp_client_t *rtsp, int media, const char* parameter);
 int rtsp_client_set_parameter(struct rtsp_client_t *rtsp, int media, const char* parameter);
 

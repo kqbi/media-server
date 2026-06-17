@@ -26,7 +26,7 @@ int sdp_a_fmtp_h264(const char* fmtp, int *format, struct sdp_a_fmtp_h264_t *h26
 	// payload type
 	*format = atoi(p);
 	p1 = strchr(p, ' ');
-	if(' ' != *p1)
+	if(!p1 || ' ' != *p1)
 		return -1;
 
 	h264->flags = 0;
@@ -35,7 +35,7 @@ int sdp_a_fmtp_h264(const char* fmtp, int *format, struct sdp_a_fmtp_h264_t *h26
 	while(*p)
 	{
 		p1 = strchr(p, '=');
-		if('=' != *p1)
+		if(!p1 || '=' != *p1)
 			return -1;
 
 		p2 = strchr(p1+1, ';');
@@ -238,7 +238,7 @@ int sdp_a_fmtp_h265(const char* fmtp, int *format, struct sdp_a_fmtp_h265_t *h26
 	// payload type
 	*format = atoi(p);
 	p1 = strchr(p, ' ');
-	if (' ' != *p1)
+	if (!p1 || ' ' != *p1)
 		return -1;
 
 	h265->flags = 0;
@@ -247,7 +247,7 @@ int sdp_a_fmtp_h265(const char* fmtp, int *format, struct sdp_a_fmtp_h265_t *h26
 	while (*p)
 	{
 		p1 = strchr(p, '=');
-		if ('=' != *p1)
+		if (!p1 || '=' != *p1)
 			return -1;
 
 		p2 = strchr(p1 + 1, ';');
@@ -279,15 +279,132 @@ int sdp_a_fmtp_h265(const char* fmtp, int *format, struct sdp_a_fmtp_h265_t *h26
 			// sprop-sei
 			if (0 == strncasecmp("sprop-vps", p, nc))
 			{
+				if (vc >= sizeof(h265->sprop_vps)) return -1;
+				h265->flags |= SDP_A_FMTP_H265_SPROP_VPS;
+				memcpy(h265->sprop_vps, p1 + 1, vc);
+				h265->sprop_vps[vc] = '\0';
 			}
 			else if (0 == strncasecmp("sprop-sps", p, nc))
 			{
+				if (vc >= sizeof(h265->sprop_sps)) return -1;
+				h265->flags |= SDP_A_FMTP_H265_SPROP_SPS;
+				memcpy(h265->sprop_sps, p1 + 1, vc);
+				h265->sprop_sps[vc] = '\0';
 			}
 			else if (0 == strncasecmp("sprop-pps", p, nc))
 			{
+				if (vc >= sizeof(h265->sprop_pps)) return -1;
+				h265->flags |= SDP_A_FMTP_H265_SPROP_PPS;
+				memcpy(h265->sprop_pps, p1 + 1, vc);
+				h265->sprop_pps[vc] = '\0';
 			}
 			else if (0 == strncasecmp("sprop-sei", p, nc))
 			{
+				if (vc >= sizeof(h265->sprop_sei)) return -1;
+				h265->flags |= SDP_A_FMTP_H265_SPROP_SEI;
+				memcpy(h265->sprop_sei, p1 + 1, vc);
+				h265->sprop_sei[vc] = '\0';
+			}
+			break;
+
+		case 't':
+			// tier-flag
+			break;
+		}
+
+		p = *p2 ? p2 + 1 : p2;
+	}
+
+	return 0;
+}
+
+// RFC9328 RTP Payload Format for Versatile Video Coding(VVC)
+// m=video 49170 RTP/AVP 98
+// a=rtpmap:98 H266/90000
+// a=fmtp:98 profile-id=1; sprop-vps=<video parameter sets data>
+int sdp_a_fmtp_h266(const char* fmtp, int* format, struct sdp_a_fmtp_h266_t* h266)
+{
+	size_t nc, vc;
+	const char* p1, * p2;
+	const char* p = fmtp;
+
+	// payload type
+	*format = atoi(p);
+	p1 = strchr(p, ' ');
+	if (!p1 || ' ' != *p1)
+		return -1;
+
+	h266->flags = 0;
+	assert(' ' == *p1);
+	p = p1 + 1;
+	while (*p)
+	{
+		p1 = strchr(p, '=');
+		if (!p1 || '=' != *p1)
+			return -1;
+
+		p2 = strchr(p1 + 1, ';');
+		if (!p2)
+			p2 = p1 + strlen(p1);
+
+		while (' ' == *p) p++; // skip space
+
+		nc = (size_t)(p1 - p); // ptrdiff_t to size_t
+		vc = (size_t)(p2 - p1 - 1); // ptrdiff_t to size_t
+		switch (*p)
+		{
+		case 'i':
+			// interop-constraints
+			break;
+		case 'l':
+			// level-id
+			break;
+		case 'p':
+			// profile-space
+			// profile-id
+			// profile-compatibility-indicator
+			break;
+
+		case 's':
+			// sprop-dci
+			// sprop-vps
+			// sprop-sps
+			// sprop-pps
+			// sprop-sei
+			if (0 == strncasecmp("sprop-vps", p, nc))
+			{
+				if (vc >= sizeof(h266->sprop_vps)) return -1;
+				h266->flags |= SDP_A_FMTP_H266_SPROP_VPS;
+				memcpy(h266->sprop_vps, p1 + 1, vc);
+				h266->sprop_vps[vc] = '\0';
+			}
+			else if (0 == strncasecmp("sprop-sps", p, nc))
+			{
+				if (vc >= sizeof(h266->sprop_sps)) return -1;
+				h266->flags |= SDP_A_FMTP_H266_SPROP_SPS;
+				memcpy(h266->sprop_sps, p1 + 1, vc);
+				h266->sprop_sps[vc] = '\0';
+			}
+			else if (0 == strncasecmp("sprop-pps", p, nc))
+			{
+				if (vc >= sizeof(h266->sprop_pps)) return -1;
+				h266->flags |= SDP_A_FMTP_H266_SPROP_PPS;
+				memcpy(h266->sprop_pps, p1 + 1, vc);
+				h266->sprop_pps[vc] = '\0';
+			}
+			else if (0 == strncasecmp("sprop-sei", p, nc))
+			{
+				if (vc >= sizeof(h266->sprop_sei)) return -1;
+				h266->flags |= SDP_A_FMTP_H266_SPROP_SEI;
+				memcpy(h266->sprop_sei, p1 + 1, vc);
+				h266->sprop_sei[vc] = '\0';
+			}
+			else if (0 == strncasecmp("sprop-dci", p, nc))
+			{
+				if (vc >= sizeof(h266->sprop_dci)) return -1;
+				h266->flags |= SDP_A_FMTP_H266_SPROP_DCI;
+				memcpy(h266->sprop_dci, p1 + 1, vc);
+				h266->sprop_dci[vc] = '\0';
 			}
 			break;
 
@@ -321,7 +438,7 @@ int sdp_a_fmtp_mpeg4(const char* fmtp, int *format, struct sdp_a_fmtp_mpeg4_t *m
 	// payload type
 	*format = atoi(p);
 	p1 = strchr(p, ' ');
-	if(' ' != *p1)
+	if(!p1 || ' ' != *p1)
 		return -1;
 
 	mpeg4->flags = 0;
@@ -330,7 +447,7 @@ int sdp_a_fmtp_mpeg4(const char* fmtp, int *format, struct sdp_a_fmtp_mpeg4_t *m
 	while(*p)
 	{
 		p1 = strchr(p, '=');
-		if('=' != *p1)
+		if(!p1 || '=' != *p1)
 			return -1;
 
 		p2 = strchr(p1+1, ';');
@@ -496,6 +613,59 @@ int sdp_a_fmtp_mpeg4(const char* fmtp, int *format, struct sdp_a_fmtp_mpeg4_t *m
 	return 0;
 }
 
+// RFC4588 RTP Retransmission Payload Format
+// a=fmtp:<number> apt=<apt-value>;rtx-time=<rtx-time-val>
+int sdp_a_fmtp_rtx(const char* fmtp, int* format, struct sdp_a_fmtp_rtx_t* rtx)
+{
+	size_t nc, vc;
+	const char* p1, * p2;
+	const char* p = fmtp;
+
+	// payload type
+	*format = atoi(p);
+	p1 = strchr(p, ' ');
+	if (!p1 || ' ' != *p1)
+		return -1;
+
+	assert(' ' == *p1);
+	p = p1 + 1;
+	while (*p)
+	{
+		p1 = strchr(p, '=');
+		if (!p1 || '=' != *p1)
+			return -1;
+
+		p2 = strchr(p1 + 1, ';');
+		if (!p2)
+			p2 = p1 + strlen(p1);
+
+		while (' ' == *p) p++; // skip space
+
+		nc = (size_t)(p1 - p); // ptrdiff_t to size_t
+		vc = (size_t)(p2 - p1 - 1); // ptrdiff_t to size_t
+		switch (*p)
+		{
+		case 'a':
+			if (0 == strncasecmp("apt", p, nc))
+			{
+				rtx->apt = atoi(p1 + 1);
+			}
+			break;
+
+		case 'r':
+			if (0 == strncasecmp("rtx-time", p, nc))
+			{
+				rtx->rtx_time = atoi(p1 + 1);
+			}
+			break;
+		}
+
+		p = *p2 ? p2 + 1 : p2;
+	}
+
+	return 0;
+}
+
 #if defined(DEBUG) || defined(_DEBUG)
 static void sdp_a_fmtp_h264_test(void)
 {
@@ -511,13 +681,29 @@ static void sdp_a_fmtp_h264_test(void)
 	assert(0 == strcmp("abcd", h264.sprop_parameter_sets));
 }
 
+static void sdp_a_fmtp_h265_test(void)
+{
+	int format = 0;
+	struct sdp_a_fmtp_h265_t h265;
+	memset(&h265, 0, sizeof(h265));
+	const char* fmtp1 = "96 sprop-vps=QAEMAf//AWAAAAMAsAAAAwAAAwBdFcCQ; sprop-sps=QgEBAWAAAAMAsAAAAwAAAwBdoAWiAFAWIFe5FlRA; sprop-pps=RAHALLwUyQ==";
+
+	assert(0 == sdp_a_fmtp_h265(fmtp1, &format, &h265));
+	assert(96 == format);
+	assert(h265.flags == (SDP_A_FMTP_H265_SPROP_VPS| SDP_A_FMTP_H265_SPROP_SPS| SDP_A_FMTP_H265_SPROP_PPS));
+	assert(0 == strcmp("QAEMAf//AWAAAAMAsAAAAwAAAwBdFcCQ", h265.sprop_vps));
+	assert(0 == strcmp("QgEBAWAAAAMAsAAAAwAAAwBdoAWiAFAWIFe5FlRA", h265.sprop_sps));
+	assert(0 == strcmp("RAHALLwUyQ==", h265.sprop_pps));
+	assert(0 == strcmp("", h265.sprop_sei));
+}
+
 static void sdp_a_fmtp_mpeg4_test(void)
 {
 	int format = 0;
 	struct sdp_a_fmtp_mpeg4_t mpeg4;
-	const char* fmtp1 = "96 streamType=3;profile-level-id=1807; mode=generic;objectType=2; config=0842237F24001FB400094002C0;sizeLength=10;CTSDeltaLength=16;randomAccessIndication=1;streamStateIndication=4";
-
-	assert(0 == sdp_a_fmtp_mpeg4(fmtp1, &format, &mpeg4));
+	const char* fmtp = "96 streamType=3;profile-level-id=1807; mode=generic;objectType=2; config=0842237F24001FB400094002C0;sizeLength=10;CTSDeltaLength=16;randomAccessIndication=1;streamStateIndication=4";
+	
+	assert(0 == sdp_a_fmtp_mpeg4(fmtp, &format, &mpeg4));
 	assert(96 == format);
 	assert(mpeg4.flags == (SDP_A_FMTP_MPEG4_OBJECTTYPE|SDP_A_FMTP_MPEG4_SIZELENGTH|SDP_A_FMTP_MPEG4_CTSDELTALENGTH|SDP_A_FMTP_MPEG4_RANDOMACCESSINDICATION|SDP_A_FMTP_MPEG4_STREAMSTATEINDICATION));
 	assert(3 == mpeg4.streamType);
@@ -531,9 +717,39 @@ static void sdp_a_fmtp_mpeg4_test(void)
 	assert(4 == mpeg4.streamStateIndication);
 }
 
+static void sdp_a_fmtp_mpeg4_aac_test(void)
+{
+	int format = 0;
+	struct sdp_a_fmtp_mpeg4_t mpeg4;
+	const char* fmtp = "97 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=131056E59D4800";
+
+	assert(0 == sdp_a_fmtp_mpeg4(fmtp, &format, &mpeg4));
+	assert(97 == format);
+	assert(mpeg4.flags == (SDP_A_FMTP_MPEG4_SIZELENGTH | SDP_A_FMTP_MPEG4_INDEXLENGTH | SDP_A_FMTP_MPEG4_INDEXDELTALENGTH));
+	assert(5 == mpeg4.streamType);
+	assert(0 == strcmp("1", mpeg4.profile_level_id));
+	assert(5 == mpeg4.mode);
+	assert(0 == strcmp(mpeg4.config, "131056E59D4800"));
+	assert(13 == mpeg4.sizeLength);
+	assert(3 == mpeg4.indexLength);
+	assert(3 == mpeg4.indexDeltaLength);
+}
+
+static void sdp_a_fmtp_rtx_test(void)
+{
+	int format = 0;
+	struct sdp_a_fmtp_rtx_t rtx;
+	const char* fmtp = "111 apt=97;rtx-time=3000";
+	assert(0 == sdp_a_fmtp_rtx(fmtp, &format, &rtx));
+	assert(111 == format && 97 == rtx.apt && 3000 == rtx.rtx_time);
+}
+
 void sdp_a_fmtp_test(void)
 {
 	sdp_a_fmtp_h264_test();
+	sdp_a_fmtp_h265_test();
 	sdp_a_fmtp_mpeg4_test();
+	sdp_a_fmtp_mpeg4_aac_test();
+	sdp_a_fmtp_rtx_test();
 }
 #endif

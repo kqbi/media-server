@@ -1,10 +1,57 @@
-#include "sip-uas-transaction.h"
+/*
+									  |INVITE
+									  |pass INV to TU
+				   INVITE             V send 100 if TU won't in 200 ms
+				   send response+------------+
+					   +--------|            |--------+ 101-199 from TU
+					   |        |            |        | send response
+					   +------->|            |<-------+
+								| Proceeding |
+								|            |--------+ Transport Err.
+								|            |        | Inform TU
+								|            |<-------+
+								+------------+
+				   300-699 from TU |    |2xx from TU
+				   send response   |    |send response
+					+--------------+    +------------+
+					|                                |
+   INVITE           V          Timer G fires         |
+   send response +-----------+ send response         |
+		+--------|           |--------+              |
+		|        |           |        |              |
+		+------->| Completed |<-------+      INVITE  |  Transport Err.
+				 |           |               -       |  Inform TU
+		+--------|           |----+          +-----+ |  +---+
+		|        +-----------+    | ACK      |     | v  |   v
+		|          ^   |          | -        |  +------------+
+		|          |   |          |          |  |            |---+ ACK
+		+----------+   |          |          +->|  Accepted  |   | to TU
+		Transport Err. |          |             |            |<--+
+		Inform TU      |          V             +------------+
+					   |      +-----------+        |  ^     |
+					   |      |           |        |  |     |
+					   |      | Confirmed |        |  +-----+
+					   |      |           |        |  2xx from TU
+		 Timer H fires |      +-----------+        |  send response
+		 -             |          |                |
+					   |          | Timer I fires  |
+					   |          | -              | Timer L fires
+					   |          V                | -
+					   |        +------------+     |
+					   |        |            |<----+
+					   +------->| Terminated |
+								|            |
+								+------------+
 
-#define MIN(x, y) ((x) < (y) ? (x) : (y))
+					Figure 7: INVITE server transaction
+*/
+
+#include "sip-uas-transaction.h"
+#include "cpm/param.h"
 
 static void sip_uas_transaction_onretransmission(void* usrptr);
 
-static struct sip_dialog_t* sip_uas_create_dialog(const struct sip_message_t* req)
+static struct sip_dialog_t* sip_uas_create_dialog(const struct sip_message_t* req, const struct sip_message_t* reply)
 {
     struct sip_dialog_t* dialog;
     dialog = sip_dialog_create();
@@ -17,6 +64,10 @@ static struct sip_dialog_t* sip_uas_create_dialog(const struct sip_message_t* re
         sip_dialog_release(dialog);
         return NULL;
     }
+
+	// update dialog remote tag
+	if (!cstrvalid(&dialog->local.uri.tag) && cstrvalid(&reply->to.tag))
+		sip_dialog_setlocaltag(dialog, &reply->to.tag);
     
     return dialog;
 }
@@ -36,38 +87,38 @@ static int sip_uas_transaction_inivte_change_state(struct sip_uas_transaction_t*
 	return t->status;
 }
 
-int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, struct sip_dialog_t* dialog, const struct sip_message_t* req)
+int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, const struct sip_message_t* req, void* param)
 {
+	char ptr[256];
+	struct cstring_t id;
 	int r, status, oldstatus;
 
+	r = 0;
 	oldstatus = t->status;
 	status = sip_uas_transaction_inivte_change_state(t, req);
 
-	r = 0;
 	switch (status)
 	{
 	case SIP_UAS_TRANSACTION_INIT:
-        if (!dialog)
-        {
-            dialog = sip_uas_create_dialog(req);
-            if(!dialog) return 0;
-        }
-        else
-        {
-            sip_dialog_addref(dialog); // for t->dialog
-        }
-            
-        t->dialog = dialog;
+        t->dialog = sip_uas_create_dialog(req, t->reply);
+        if(!t->dialog) return 0;
+		if (t->dialog->state == DIALOG_ERALY && req->to.tag.n > 0)
+			t->dialog->state = DIALOG_CONFIRMED; // re-invite
+		sip_dialog_id(&id, t->dialog, ptr, sizeof(ptr)); // always has dialog id
+
+		//assert(t->param == t->initparam);
+        
 		// notify user
 		t->status = SIP_UAS_TRANSACTION_TRYING;
 		// re-invite: 488 (Not Acceptable Here)
-		t->dialog->session = t->handler->oninvite(t->param, req, t, (dialog && dialog->state == DIALOG_CONFIRMED) ? dialog : NULL, req->payload, req->size);
+		r = t->handler->oninvite(param, req, t, (t->dialog && t->dialog->state == DIALOG_CONFIRMED) ? t->dialog : NULL, &id, req->payload, req->size);
 		// TODO: add timer here, send 100 trying
-		if (!t->dialog->session && SIP_UAS_TRANSACTION_TRYING == t->status)
+		if (0 != r && SIP_UAS_TRANSACTION_TRYING == t->status)
 		{
+			sip_uas_transaction_timewait(t, TIMER_H);
+
 			// user ignore/discard
 			t->status = SIP_UAS_TRANSACTION_TERMINATED;
-			sip_uas_transaction_timewait(t, TIMER_H);
 		}
 		break;
 
@@ -87,7 +138,7 @@ int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, struct sip
 
 	case SIP_UAS_TRANSACTION_PROCEEDING:
 		// send last 1xx reply
-		sip_uas_transaction_dosend(t);
+		r = sip_uas_transaction_dosend(t, param);
 		// ignore transport error(client will retransmission request)
 		break;
 
@@ -97,7 +148,7 @@ int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, struct sip
 		// until recv ack
 		
 		// send last 3xx-6xx reply
-		sip_uas_transaction_dosend(t);
+		r = sip_uas_transaction_dosend(t, param);
 		break;
 
 	case SIP_UAS_TRANSACTION_ACCEPTED:
@@ -107,11 +158,10 @@ int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, struct sip
 		// retransmissions are not passed onto the TU.
 
 		// send last 2xx reply
-		sip_uas_transaction_dosend(t);
+		r = sip_uas_transaction_dosend(t, param);
 		break;
 
 	case SIP_UAS_TRANSACTION_CONFIRMED:
-        assert(!dialog || dialog == t->dialog);
 		if (oldstatus == SIP_UAS_TRANSACTION_ACCEPTED)
 		{
             // update dialog target
@@ -119,7 +169,9 @@ int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, struct sip
             
 			if(t->dialog->state == DIALOG_ERALY) // re-invite
                 t->dialog->state = DIALOG_CONFIRMED;
-			t->handler->onack(t->param, req, t, t->dialog->session, t->dialog, 200, req->payload, req->size);
+
+			sip_dialog_id(&id, t->dialog, ptr, sizeof(ptr));
+			r = t->handler->onack(param, req, t, t->dialog, &id, 200, req->payload, req->size);
 
 			// start timer I, wait for all inflight ACK
 			sip_uas_transaction_timewait(t, t->reliable ? 1 : TIMER_I);
@@ -144,13 +196,13 @@ int sip_uas_transaction_invite_input(struct sip_uas_transaction_t* t, struct sip
 		assert(0);
 	}
 
-	return 0;
+	return r;
 }
 
-int sip_uas_transaction_invite_reply(struct sip_uas_transaction_t* t, int code, const void* data, int bytes)
+int sip_uas_transaction_invite_reply(struct sip_uas_transaction_t* t, int code, const void* data, int bytes, void* param)
 {
-	int r;
-	assert(SIP_UAS_TRANSACTION_TRYING == t->status || SIP_UAS_TRANSACTION_PROCEEDING == t->status);
+	// fix timeout(triggle by timer) before reply any code
+	assert(SIP_UAS_TRANSACTION_ACCEPTED != t->status && SIP_UAS_TRANSACTION_COMPLETED != t->status); // 200~700 reply once only
 	if (SIP_UAS_TRANSACTION_TRYING != t->status && SIP_UAS_TRANSACTION_PROCEEDING != t->status)
 		return 0; // discard
 
@@ -163,13 +215,12 @@ int sip_uas_transaction_invite_reply(struct sip_uas_transaction_t* t, int code, 
 	if (t->size < 1)
 		return -1;
 
-    // aet early dialog local url tag
+    // set early dialog local url tag/target
     if(sip_message_isinvite(t->reply) && t->dialog && !cstrvalid(&t->dialog->local.uri.tag))
     {
         assert(cstrvalid(&t->reply->to.tag));
         sip_dialog_setlocaltag(t->dialog, &t->reply->to.tag);
-        r = sip_dialog_add(t->agent, t->dialog);
-        assert(0 == r);
+		sip_dialog_set_local_target(t->dialog, t->reply);
     }
 
 	if (100 <= code && code < 200)
@@ -181,6 +232,8 @@ int sip_uas_transaction_invite_reply(struct sip_uas_transaction_t* t, int code, 
 	{
 		// If a UAS generates a 2xx response and never receives an ACK, it
 		// SHOULD generate a BYE to terminate the dialog.
+
+		// The server transaction MUST NOT generate 2xx retransmissions on its own
 
 		// rfc6026
 		t->status = SIP_UAS_TRANSACTION_ACCEPTED;
@@ -203,36 +256,42 @@ int sip_uas_transaction_invite_reply(struct sip_uas_transaction_t* t, int code, 
 		// set Timer L to 64*T1
 
 		t->retries = 1;
-		t->timerh = sip_uas_start_timer(t->agent, t, TIMER_H, sip_uas_transaction_ontimeout);
-		if (!t->reliable) // UDP
+		if (!t->reliable) { // UDP
 			t->timerg = sip_uas_start_timer(t->agent, t, TIMER_G, sip_uas_transaction_onretransmission);
-		assert(t->timerh && (!t->reliable || t->timerg));
+		}
+		sip_uas_transaction_timeout(t, TIMER_H);
+		assert(t->timerh && (t->reliable || t->timerg));
+	}
+	else
+	{
+		// proceding timeout
+		sip_uas_transaction_timeout(t, TIMER_H);
 	}
 
-    return sip_uas_transaction_dosend(t);
+    return sip_uas_transaction_dosend(t, param);
 }
 
 static void sip_uas_transaction_onretransmission(void* usrptr)
 {
-	int r;
+	int r, timeout;
 	struct sip_uas_transaction_t* t;
 	t = (struct sip_uas_transaction_t*)usrptr;
-	r = 0;
 	locker_lock(&t->locker);
-	t->timerg = NULL;
-
+	sip_uas_stop_timer(t->agent, t, &t->timerg); // hijack free timer only, don't release transaction
+	
 	if (t->status < SIP_UAS_TRANSACTION_CONFIRMED)
 	{
 		assert(SIP_UAS_TRANSACTION_COMPLETED == t->status || SIP_UAS_TRANSACTION_ACCEPTED == t->status);
-		r = sip_uas_transaction_dosend(t);
-		//if (0 != r)
-		//{
-		//	// 8.1. 3.1 Transaction Layer Errors (p42)
-		//	r = t->handler.onack(t->param, t, t->session, t->dialog, 503/*Service Unavailable*/, NULL, 0);
-		//}
+		r = sip_uas_transaction_dosend(t, t->initparam); // fixme
+		if (0 != r)
+		{
+			// 8.1. 3.1 Transaction Layer Errors (p42)
+			//r = t->handler.onack(t->initparam, t, t->session, (t->dialog && t->dialog->state == DIALOG_CONFIRMED) ? t->dialog : NULL, 503/*Service Unavailable*/, NULL, 0);
+		}
 
 		assert(!t->reliable);
-		t->timerg = sip_uas_start_timer(t->agent, t, MIN(t->t2, T1 * (1 << t->retries++)), sip_uas_transaction_onretransmission);
+		timeout = T1 * (1 << t->retries++);
+		t->timerg = sip_uas_start_timer(t->agent, t, MIN(t->t2, MAX(T1, timeout)), sip_uas_transaction_onretransmission);
 	}
 
 	locker_unlock(&t->locker);

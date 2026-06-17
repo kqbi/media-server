@@ -9,7 +9,8 @@ int sip_header_cseq(const char* s, const char* end, struct sip_cseq_t* cseq)
 {
 	char* p;
 
-	cseq->id = (uint32_t)strtoul(s, &p, 10);
+	p = (char*)s;
+	cseq->id = (s && s < end) ? (uint32_t)strtoul(s, &p, 10) : 0;
 
 	cseq->method.p = p;
 	cseq->method.n = end - p;
@@ -20,18 +21,9 @@ int sip_header_cseq(const char* s, const char* end, struct sip_cseq_t* cseq)
 
 int sip_cseq_write(const struct sip_cseq_t* cseq, char* data, const char* end)
 {
-	char* p;
 	if (!cstrvalid(&cseq->method))
 		return -1;
-
-	p = data;
-	if (p < end)
-		snprintf(p, end - p, "%lu ", (unsigned long)cseq->id);
-
-	if (p < end)
-		p += cstrcpy(&cseq->method, p, end - p);
-
-	return p - data;
+	return snprintf(data, end-data, "%u %.*s", (unsigned int)cseq->id, (int)cseq->method.n, cseq->method.p);
 }
 
 #if defined(DEBUG) || defined(_DEBUG)

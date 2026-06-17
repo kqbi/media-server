@@ -51,6 +51,15 @@ static inline size_t mpeg4_bits_remain(struct mpeg4_bits_t* bits)
 	return bits->error ? 0 : (bits->size * 8 - bits->bits);
 }
 
+static inline void mpeg4_bits_skip(struct mpeg4_bits_t* bits, size_t n)
+{
+	bits->bits += n;
+	if (bits->bits > bits->size * 8)
+	{
+		bits->error = -1;
+	}
+}
+
 /// read 1-bit from bit stream(offset position)
 /// @param[in] bits bit stream
 /// @return -1-error, 1-value, 0-value
@@ -114,6 +123,29 @@ static inline uint64_t mpeg4_bits_read_n(struct mpeg4_bits_t* bits, int n)
 	return v;
 }
 
+// http://aomedia.org/av1/specification/conventions/#descriptors
+static inline uint64_t mpeg4_bits_read_uvlc(struct mpeg4_bits_t* bits)
+{
+	uint64_t value;
+	int leadingZeros;
+	for (leadingZeros = 0; !mpeg4_bits_read(bits); ++leadingZeros)
+	{
+	}
+
+	if (leadingZeros >= 32)
+		return (1ULL << 32) - 1;
+	
+	value = leadingZeros > 0 ? mpeg4_bits_read_n(bits, leadingZeros) : 0;
+	return (1ULL << leadingZeros) - 1 + value;
+}
+
+static inline uint64_t mpeg4_bits_read_latm(struct mpeg4_bits_t* bits)
+{
+	int len;
+	len = (int)mpeg4_bits_read_n(bits, 2);
+	return mpeg4_bits_read_n(bits, (len + 1) * 8);
+}
+
 /// write 1-bit
 /// @param[in] v write 0 if v value 0, other, write 1
 static inline int mpeg4_bits_write(struct mpeg4_bits_t* bits, int v)
@@ -145,7 +177,7 @@ static inline int mpeg4_bits_write_n(struct mpeg4_bits_t* bits, uint64_t v, int 
 	}
 
 	m = n;
-	v <<= 64 - n; // left shift to first bit
+	v = v << (64 - n); // left shift to first bit
 
 	bits->data[bits->bits / 8] |= v >> (56 + (bits->bits % 8)); // remain valid value
 	v <<= 8 - (bits->bits % 8);

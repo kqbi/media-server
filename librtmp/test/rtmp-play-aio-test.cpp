@@ -36,7 +36,7 @@ static int rtmp_client_play_onscript(void* flv, const void* script, size_t bytes
 	return flv_writer_input(flv, FLV_TYPE_SCRIPT, script, bytes, timestamp);
 }
 
-static void rtmp_onconnect(void* flv, int code, aio_socket_t aio)
+static void rtmp_onconnect(void* flv, int code, socket_t tcp, aio_socket_t aio)
 {
 	assert(0 == code);
 
@@ -64,7 +64,7 @@ void rtmp_play_aio_test(const char* host, const char* app, const char* stream, c
 	void* flv = flv_writer_create(file);
 	aio_connect(host, 1935, 3000, rtmp_onconnect, flv);
 		
-//	uint64_t clock = system_clock();
+//	uint32_t clock = system_clock();
 	while (0 == s_param.code)
 	{
 		aio_socket_process(1000);

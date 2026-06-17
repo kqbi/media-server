@@ -1,3 +1,48 @@
+/*
+|Request from TU
+								   |send request
+			   Timer E             V
+			   send request  +-----------+
+				   +---------|           |-------------------+
+				   |         |  Trying   |  Timer F          |
+				   +-------->|           |  or Transport Err.|
+							 +-----------+  inform TU        |
+				200-699         |  |                         |
+				resp. to TU     |  |1xx                      |
+				+---------------+  |resp. to TU              |
+				|                  |                         |
+				|   Timer E        V       Timer F           |
+				|   send req +-----------+ or Transport Err. |
+				|  +---------|           | inform TU         |
+				|  |         |Proceeding |------------------>|
+				|  +-------->|           |-----+             |
+				|            +-----------+     |1xx          |
+				|              |      ^        |resp to TU   |
+				| 200-699      |      +--------+             |
+				| resp. to TU  |                             |
+				|              |                             |
+				|              V                             |
+				|            +-----------+                   |
+				|            |           |                   |
+				|            | Completed |                   |
+				|            |           |                   |
+				|            +-----------+                   |
+				|              ^   |                         |
+				|              |   | Timer K                 |
+				+--------------+   | -                       |
+								   |                         |
+								   V                         |
+			 NOTE:           +-----------+                   |
+							 |           |                   |
+		 transitions         | Terminated|<------------------+
+		 labeled with        |           |
+		 the event           +-----------+
+		 over the action
+		 to take
+
+				 Figure 6: non-INVITE client transaction
+*/
+
 #include "sip-uac-transaction.h"
 #include "sip-uac.h"
 #include <stdlib.h>
@@ -7,26 +52,35 @@
 static int sip_uac_transaction_noninvite_proceeding(struct sip_uac_transaction_t* t, const struct sip_message_t* reply)
 {
 	assert(SIP_UAC_TRANSACTION_TRYING == t->status || SIP_UAC_TRANSACTION_PROCEEDING == t->status);
-	return t->onreply(t->param, reply, t, reply->u.s.code);
+	if(sip_message_issubscribe(t->req))
+		return sip_uac_subscribe_onreply(t, reply);
+	else if (sip_message_isnotify(t->req))
+		return sip_uac_notify_onreply(t, reply);
+    else
+		return t->onreply(t->param, reply, t, reply->u.s.code);
 }
 
 static int sip_uac_transaction_noninvite_completed(struct sip_uac_transaction_t* t, const struct sip_message_t* reply)
 {
 	int r;
-	assert(SIP_UAC_TRANSACTION_TRYING == t->status || SIP_UAC_TRANSACTION_PROCEEDING == t->status || SIP_UAC_TRANSACTION_PROCEEDING == t->status || SIP_UAC_TRANSACTION_COMPLETED == t->status);
+	assert(SIP_UAC_TRANSACTION_TRYING == t->status || SIP_UAC_TRANSACTION_PROCEEDING == t->status || SIP_UAC_TRANSACTION_COMPLETED == t->status);
 
 	// stop retry timer A
-	if (NULL != t->timera)
-	{
-		sip_uac_stop_timer(t->agent, t, t->timera);
-		t->timera = NULL;
-	}
+	sip_uac_stop_timer(t->agent, t, &t->timera);
 
-	r = t->onreply(t->param, reply, t, reply->u.s.code);
+	if(sip_message_issubscribe(t->req))
+		r = sip_uac_subscribe_onreply(t, reply);
+	else if (sip_message_isnotify(t->req))
+		r = sip_uac_notify_onreply(t, reply);
+	else
+		r = t->onreply(t->param, reply, t, reply->u.s.code);
 	
 	// post-handle
 	if (t->onhandle)
-		t->onhandle(t, reply);
+	{
+		t->onhandle(t, reply->u.s.code);
+		t->onhandle = NULL;
+	}
 
 	// wait for in-flight response
 	sip_uac_transaction_timewait(t, t->reliable ? 1 : TIMER_K);

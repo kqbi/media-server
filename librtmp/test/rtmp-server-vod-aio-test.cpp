@@ -24,11 +24,12 @@ struct rtmp_server_vod_t
 static int STDCALL aio_rtmp_server_worker(void* param)
 {
 	int r, type;
+    size_t taglen;
     uint32_t timestamp;
     uint32_t s_timestamp = 0;
     uint32_t diff = 0;
-    uint64_t clock;
-	//uint64_t clock0 = system_clock() - 3000; // send more data, open fast
+    uint32_t clock;
+	//uint32_t clock0 = system_clock() - 3000; // send more data, open fast
 	rtmp_server_vod_t* vod = (rtmp_server_vod_t*)param;
 
     while (1)
@@ -36,10 +37,10 @@ static int STDCALL aio_rtmp_server_worker(void* param)
         void* f = flv_reader_create(s_file);
 
         clock = system_clock(); // timestamp start from 0
-        while ((r = flv_reader_read(f, &type, &timestamp, vod->packet, sizeof(vod->packet))) > 0)
+        while (1 == flv_reader_read(f, &type, &timestamp, &taglen, vod->packet, sizeof(vod->packet)))
         {
-            assert(r < sizeof(vod->packet));
-            uint64_t t = system_clock();
+            assert(taglen < sizeof(vod->packet));
+            uint32_t t = system_clock();
             if (clock + timestamp > t && clock + timestamp < t + 3 * 1000)
                 system_sleep(clock + timestamp - t);
 			else if (clock + timestamp > t + 3 * 1000)
@@ -61,15 +62,15 @@ static int STDCALL aio_rtmp_server_worker(void* param)
 
             if (FLV_TYPE_AUDIO == type)
             {
-                r = aio_rtmp_server_send_audio(vod->session, vod->packet, r, timestamp);
+                r = aio_rtmp_server_send_audio(vod->session, vod->packet, taglen, timestamp);
             }
             else if (FLV_TYPE_VIDEO == type)
             {
-                r = aio_rtmp_server_send_video(vod->session, vod->packet, r, timestamp);
+                r = aio_rtmp_server_send_video(vod->session, vod->packet, taglen, timestamp);
             }
             else if (FLV_TYPE_SCRIPT == type)
             {
-                r = aio_rtmp_server_send_script(vod->session, vod->packet, r, timestamp);
+                r = aio_rtmp_server_send_script(vod->session, vod->packet, taglen, timestamp);
             }
             else
             {

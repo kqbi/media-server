@@ -15,6 +15,7 @@
 #define RTMP_LEVEL_WARNING	"warning"
 #define RTMP_LEVEL_STATUS	"status"
 #define RTMP_LEVEL_ERROR	"error"
+#define RTMP_LEVEL_FINISH	"finish" // ksyun cdn
 
 // Chunk Stram Id
 enum rtmp_channel_t
@@ -57,6 +58,7 @@ enum rtmp_notify_t
 struct rtmp_packet_t
 {
 	struct rtmp_chunk_header_t header;
+	uint32_t delta; // delta / timestamp
 	uint32_t clock; // timestamp
 
 	uint8_t* payload;
@@ -88,6 +90,13 @@ struct rtmp_parser_t
 	struct rtmp_packet_t* pkt;
 };
 
+struct rtmp_chunk_write_header_t
+{
+	uint8_t bufer[MAX_CHUNK_HEADER + 5 * 20]; // 1-full chunk header + 20-type3 chunk header(with timestamp)
+	uint8_t* ptr;
+	uint32_t capacity;
+};
+
 struct rtmp_t
 {
 	uint32_t in_chunk_size; // read from network
@@ -106,6 +115,8 @@ struct rtmp_t
 	struct rtmp_packet_t out_packets[N_CHUNK_STREAM]; // send to network
 	struct rtmp_parser_t parser;
 
+	struct rtmp_chunk_write_header_t chunk_write_header; // rtmp_chunk_write only
+
 	void* param;
 
 	/// @return 0-ok, other-error
@@ -117,34 +128,38 @@ struct rtmp_t
 
 	void (*onabort)(void* param, uint32_t chunk_stream_id);
 
-	union
+	struct
 	{
-		struct
-		{
-			// server side
-			int (*onconnect)(void* param, int r, double transaction, const struct rtmp_connect_t* connect);
-			int (*oncreate_stream)(void* param, int r, double transaction);
-			int (*onplay)(void* param, int r, double transaction, const char* stream_name, double start, double duration, uint8_t reset);
-			int (*ondelete_stream)(void* param, int r, double transaction, double stream_id);
-			int (*onreceive_audio)(void* param, int r, double transaction, uint8_t audio);
-			int (*onreceive_video)(void* param, int r, double transaction, uint8_t video);
-			int (*onpublish)(void* param, int r, double transaction, const char* stream_name, const char* stream_type);
-			int (*onseek)(void* param, int r, double transaction, double milliSeconds);
-			int (*onpause)(void* param, int r, double transaction, uint8_t pause, double milliSeconds);
-			int (*onget_stream_length)(void* param, int r, double transaction, const char* stream_name);
-		} server;
+		// server side
+		int (*onconnect)(void* param, int r, double transaction, const struct rtmp_connect_t* connect);
+		int (*oncreate_stream)(void* param, int r, double transaction);
+		int (*onplay)(void* param, int r, double transaction, const char* stream_name, double start, double duration, uint8_t reset);
+		int (*ondelete_stream)(void* param, int r, double transaction, double stream_id);
+		int (*onreceive_audio)(void* param, int r, double transaction, uint8_t audio);
+		int (*onreceive_video)(void* param, int r, double transaction, uint8_t video);
+		int (*onpublish)(void* param, int r, double transaction, const char* stream_name, const char* stream_type);
+		int (*onseek)(void* param, int r, double transaction, double milliSeconds);
+		int (*onpause)(void* param, int r, double transaction, uint8_t pause, double milliSeconds);
+		int (*onget_stream_length)(void* param, int r, double transaction, const char* stream_name);
+	} server;
 
-		struct
-		{
-			// client side
-			int (*onconnect)(void* param);
-			int (*oncreate_stream)(void* param, double stream_id);
-			int (*onnotify)(void* param, enum rtmp_notify_t notify);
-            int (*oneof)(void* param, uint32_t stream_id); // EOF event
-			int (*onping)(void* param, uint32_t stream_id); // send pong
-			int (*onbandwidth)(void* param); // send window acknowledgement size
-		} client;
-	} u;
+	struct
+	{
+		// client side
+		int (*onconnect)(void* param);
+		int (*oncreate_stream)(void* param, double stream_id);
+		int (*onnotify)(void* param, enum rtmp_notify_t notify);
+        int (*oneof)(void* param, uint32_t stream_id); // EOF event
+		int (*onping)(void* param, uint32_t stream_id); // send pong
+		int (*onbandwidth)(void* param); // send window acknowledgement size
+
+		// enhanced rtmp v2
+		// 1. rtmp://foo.mydomain.com:1935/realtimeapp
+		// 2. rtmp://127.0.0.1/realtimeapp
+		// 3. //192.0.2.0/realtimeapp
+		// 4. / realtimeapp
+		int (*onreconnect)(void* param, const char* tcurl, const char* descritpion);
+	} client;
 };
 
 /// @return 0-ok, other-error
